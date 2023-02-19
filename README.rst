@@ -120,15 +120,15 @@ This repository was presented at the International Conference of Machine Learnin
 .. sourcecode:: bibtex
 
     @inproceedings{martinez2022closed,
-    title={Closed-Form Diffeomorphic Transformations for Time Series Alignment},
-    author={Martinez, I{\~n}igo and Viles, Elisabeth and Olaizola, Igor G},
-    booktitle={International Conference on Machine Learning},
-    pages={15122--15158},
-    year={2022},
-    organization={PMLR}
+        title={Closed-Form Diffeomorphic Transformations for Time Series Alignment},
+        author={Martinez, I{\~n}igo and Viles, Elisabeth and Olaizola, Igor G},
+        booktitle={International Conference on Machine Learning},
+        pages={15122--15158},
+        year={2022},
+        organization={PMLR}
     }
 
-Furthermore, please also cite previous articles by Freifeld et. al., which are pivotal for this work:
+Furthermore, please cite previous articles by Freifeld et al. that are essential to this work.
 
 .. sourcecode:: bibtex
 
