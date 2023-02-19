@@ -112,7 +112,44 @@ In addition, for optimization tasks, it is useful to obtain the gradient of the 
     :align: center
     :width: 500
 
+Citations
+---------
 
+This repository was presented at the International Conference of Machine Learning (ICML 2022). 
+
+.. sourcecode:: bibtex
+
+    @inproceedings{martinez2022closed,
+    title={Closed-Form Diffeomorphic Transformations for Time Series Alignment},
+    author={Martinez, I{\~n}igo and Viles, Elisabeth and Olaizola, Igor G},
+    booktitle={International Conference on Machine Learning},
+    pages={15122--15158},
+    year={2022},
+    organization={PMLR}
+    }
+
+Furthermore, please also cite previous articles by Freifeld et. al., which are pivotal for this work:
+
+.. sourcecode:: bibtex
+
+    @article{freifeld2017transformations,
+        title={Transformations based on continuous piecewise-affine velocity fields},
+        author={Freifeld, Oren and Hauberg, S{\o}ren and Batmanghelich, Kayhan and Fisher, Jonn W},
+        journal={IEEE transactions on pattern analysis and machine intelligence},
+        volume={39},
+        number={12},
+        pages={2496--2509},
+        year={2017},
+        publisher={IEEE}
+    }
+
+    @inproceedings{freifeld2015highly,
+        title={Highly-expressive spaces of well-behaved transformations: Keeping it simple},
+        author={Freifeld, Oren and Hauberg, Soren and Batmanghelich, Kayhan and Fisher, John W},
+        booktitle={Proceedings of the IEEE International Conference on Computer Vision},
+        pages={2911--2919},
+        year={2015}
+    }
 
 Installation
 ------------
