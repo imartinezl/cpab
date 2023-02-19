@@ -5,93 +5,439 @@ sys.path.insert(0,'..')
 import time
 import timeit
 import numpy as np
+import pandas as pd
 import torch
 import matplotlib.pyplot as plt
+import seaborn as sns
 import cpab
 from tqdm import tqdm 
+import torch.utils.benchmark as benchmark
+from itertools import product
+
+
+# %% INTEGRATION
+
+results = []
+
+tess_size_arr = [50]
+backend_arr = ["pytorch"] # ["pytorch", "numpy"]
+device_arr = ["cpu"] # ["cpu", "gpu"]
+zero_boundary_arr = [True]
+use_slow_arr = [False]
+outsize_arr = [200]
+batch_size_arr = [20]
+basis_arr = ["svd"] # ["svd", "rref", "sparse", "qr"]
+method_arr = ["closed_form", "numeric"] # ["closed_form", "numeric"]
+N_arr = [0,1,2,3,4,5,6,7,8]
+epsilon_arr = [0,1,2,3,4]
+num_threads_arr = [1]
+
+colnames = [
+    "tess_size", "backend", "device", "zero_boundary", "use_slow", 
+    "outsize", "batch_size", "basis", "method", "N", "epsilon", "num_threads",
+    "error", "elapsed_time"]
+configurations = list(product(tess_size_arr, backend_arr, device_arr, zero_boundary_arr, use_slow_arr, outsize_arr, 
+    batch_size_arr, basis_arr, method_arr, N_arr, epsilon_arr, num_threads_arr))
+n_configurations = len(configurations)
+with tqdm(desc='Benchmark', unit='iters', total=n_configurations,  position=0, leave=True) as pb:
+    for config in configurations:
+        tess_size, backend, device, zero_boundary, use_slow, outsize, batch_size, basis, method, N, epsilon, num_threads = config
+
+        T = cpab.Cpab(tess_size, backend, device, zero_boundary, basis)
+        T.params.use_slow = use_slow
+
+        # compute
+        grid = T.uniform_meshgrid(outsize)
+        theta = T.identity(batch_size, epsilon=epsilon)
+        torch.manual_seed(0)
+        theta = T.sample_transformation(batch_size)*epsilon
+        grid_ref = T.transform_grid(grid, theta, method=method, time=1.0)
+        grid_t = T.transform_grid_ss(grid, theta / 2**N, method=method, time=1.0, N=N) 
+
+        # error
+        error = np.linalg.norm(grid_ref - grid_t)
+
+        # time
+        t0 = benchmark.Timer(
+            stmt="""grid_t = T.transform_grid_ss(grid, theta / 2**N, method=method, time=1.0, N=N)""", 
+            globals={"T": T, "grid": grid, "theta": theta, "method": method, "N": N},
+            num_threads = num_threads
+        )
+        measure = t0.blocked_autorange(min_run_time = 1)
+        # measure = t0.timeit(1000)
+        elapsed_time = measure.mean * 1e6 # microseconds us
+
+        # save
+        to_save = [tess_size, backend, device, zero_boundary, use_slow, outsize, batch_size, basis, method, N, epsilon, num_threads,
+            error, elapsed_time]
+        results.append(to_save)
+
+        pb.update()
+    pb.close()
+
+results = pd.DataFrame(results, columns=colnames)
+results.to_csv("scaling_squaring_integration.csv", index=False)
 
 # %%
+results = pd.read_csv("scaling_squaring_integration.csv")
 
-tess_size = 10
+value_vars = ["error", "elapsed_time"]
+id_vars = [e for e in results.columns if e not in value_vars]
+results_melt = results.melt(id_vars=id_vars, value_vars=value_vars)
+
+sns.set_style("whitegrid", {'axes.grid' : False})
+sns.set_context("paper")
+palette = "blend:orange,blue"
+g = sns.relplot(x="N", y="value", hue="epsilon", style="epsilon",
+    row="variable", #col="method", 
+    kind="line", 
+    data=results_melt[results_melt.method=="closed_form"], 
+    legend="full", palette=palette, height=3, aspect=1.2,
+    ci=None, markersize=8, markers=True, dashes=False, lw=2, 
+    facet_kws = {
+        "sharex": True, "sharey":False, "despine": False, "legend_out": False
+    })
+
+for ax in g.axes.flatten():
+    ax.set_xticks([0,1,2,3,4,5,6,7,8])
+# g.set_titles(template="Method: {col_name}")
+g.set_titles(template="")
+g.set(ylim=(-0.02, None))
+g.axes[0,0].set_ylabel('RMS Error')
+g.axes[1,0].set_ylabel('Time ($\mu s$)')
+g.axes[1,0].set_xlabel('Number of squarings $N$')
+# g.axes[1,1].set_xlabel('Scaling parameter $N$')
+g.axes[0,0].legend(title="$\\varepsilon$")
+
+plt.tight_layout()
+plt.savefig("scaling_squaring_integration.pdf")
+
+# %% GRADIENT
+
+import torch.utils.benchmark as benchmark
+from itertools import product
+
+results = []
+
+tess_size_arr = [50]
+backend_arr = ["pytorch"] # ["pytorch", "numpy"]
+device_arr = ["cpu"] # ["cpu", "gpu"]
+zero_boundary_arr = [True]
+use_slow_arr = [False]
+outsize_arr = [200]
+batch_size_arr = [20]
+basis_arr = ["svd"] # ["svd", "rref", "sparse", "qr"]
+method_arr = ["closed_form", "numeric"] # ["closed_form", "numeric"]
+N_arr = [0,1,2,3,4,5,6,7,8]
+epsilon_arr = [0,1,2,3,4]
+num_threads_arr = [1]
+
+colnames = [
+    "tess_size", "backend", "device", "zero_boundary", "use_slow", 
+    "outsize", "batch_size", "basis", "method", "N", "epsilon", "num_threads",
+    "error", "elapsed_time"]
+configurations = list(product(tess_size_arr, backend_arr, device_arr, zero_boundary_arr, use_slow_arr, outsize_arr, 
+    batch_size_arr, basis_arr, method_arr, N_arr, epsilon_arr, num_threads_arr))
+n_configurations = len(configurations)
+with tqdm(desc='Benchmark', unit='iters', total=n_configurations,  position=0, leave=True) as pb:
+    for config in configurations:
+        tess_size, backend, device, zero_boundary, use_slow, outsize, batch_size, basis, method, N, epsilon, num_threads = config
+
+        T = cpab.Cpab(tess_size, backend, device, zero_boundary, basis)
+        T.params.use_slow = use_slow
+
+        # compute
+        grid = T.uniform_meshgrid(outsize)
+        theta = T.identity(batch_size, epsilon=epsilon)
+        torch.manual_seed(0)
+        theta = T.sample_transformation(batch_size)*epsilon
+
+        # grad
+        theta_ref = torch.autograd.Variable(theta, requires_grad=True)
+        grid_ref = T.transform_grid(grid, theta_ref, method=method, time=1.0)
+        loss_ref = torch.norm(grid_ref)
+        grid_ref.retain_grad()
+        loss_ref.retain_grad()
+        loss_ref.backward()
+
+        theta_t = torch.autograd.Variable(theta, requires_grad=True)
+        grid_t = T.transform_grid_ss(grid, theta_t / 2**N, method=method, time=1.0, N=N)
+        loss_t = torch.norm(grid_t)
+        grid_t.retain_grad()
+        loss_t.retain_grad()
+        loss_t.backward()
+
+        # error
+        # error = np.linalg.norm(theta_ref.grad - theta_t.grad)
+        error = np.linalg.norm(grid_ref.grad - grid_t.grad) 
+
+        # time
+        t0 = benchmark.Timer(
+            stmt="""
+                theta_t = torch.autograd.Variable(theta, requires_grad=True)
+                grid_t = T.transform_grid_ss(grid, theta_t / 2**N, method=method, time=1.0, N=N)
+                loss_t = torch.norm(grid_t)
+                loss_t.backward()
+            """, 
+            globals={"T": T, "grid": grid, "theta": theta, "method": method, "N": N, "torch": torch},
+            num_threads = num_threads
+        )
+        measure = t0.blocked_autorange(min_run_time = 1)
+        # measure = t0.timeit(1000)
+        elapsed_time = measure.mean * 1e3 # miliseconds us
+
+        # save
+        to_save = [tess_size, backend, device, zero_boundary, use_slow, outsize, batch_size, basis, method, N, epsilon, num_threads,
+            error, elapsed_time]
+        results.append(to_save)
+
+        pb.update()
+        
+    pb.close()
+
+results = pd.DataFrame(results, columns=colnames)
+results.to_csv("scaling_squaring_gradient.csv", index=False)
+
+# %%
+results = pd.read_csv("scaling_squaring_gradient.csv")
+
+# fig, ax = plt.subplots(2,2, constrained_layout=True, figsize=(8,8))
+plt.figure(constrained_layout=True, figsize=(8,6))
+
+value_vars = ["error", "elapsed_time"]
+id_vars = [e for e in results.columns if e not in value_vars]
+results_melt = results.melt(id_vars=id_vars, value_vars=value_vars)
+
+sns.set_style("whitegrid", {'axes.grid' : False})
+sns.set_context("paper")
+palette = "blend:orange,blue"
+g = sns.relplot(x="N", y="value", hue="epsilon", style="epsilon",
+    row="variable", #col="method",
+    kind="line", height=3, aspect=1.2,
+    data=results_melt[results_melt.method=="closed_form"], 
+    legend="full", palette=palette, 
+    ci=None, markersize=8, markers=True, dashes=False, lw=2,
+    facet_kws = {
+        "sharex": True, "sharey":False, "despine": False, "legend_out": False
+    })
+for ax in g.axes.flatten():
+    ax.set_xticks([0,1,2,3,4,5,6,7,8])
+# g.set_titles(template="Method: {col_name}")
+g.set_titles(template="")
+g.axes[0,0].set_ylabel('RMS Error')
+g.axes[1,0].set_ylabel('Time (ms)')
+g.axes[1,0].set_xlabel('Number of squarings $N$')
+# g.axes[1,1].set_xlabel('Scaling parameter $N$')
+g.axes[0,0].legend(title="$\\varepsilon$")
+
+plt.tight_layout()
+plt.savefig("scaling_squaring_gradient.pdf")
+
+# %% TRAINING
+
+tess_size = 50
 backend = "pytorch" # ["pytorch", "numpy"]
 device = "cpu" # ["cpu", "gpu"]
 zero_boundary = True
 use_slow = False
-outsize = 100
+outsize = 200
 batch_size = 1
 basis = "svd"
+epsilon_arr = [0,1,2,3,4]
+N_arr = [0,1,2,3,4,5,6,7,8]
+lr_arr = [1e-3, 1e-4, 1e-5, 1e-6]
 
-T = cpab.Cpab(tess_size, backend, device, zero_boundary, basis)
-T.params.use_slow = use_slow
+colnames = ["epsilon", "N", "lr", "elapsed_time", "error_mean", "error_min"]
+configurations = list(product(epsilon_arr, N_arr, lr_arr))
+results = []
 
-grid = T.uniform_meshgrid(outsize)
+with tqdm(desc='Benchmark', unit='iters', total=len(configurations),  position=0, leave=True) as pb:
+for config in configurations:
+    epsilon, N, lr = config
+    T = cpab.Cpab(tess_size, backend, device, zero_boundary, basis)
+    T.params.use_slow = use_slow
 
-torch.manual_seed(0)
-theta_1 = T.identity(batch_size, epsilon=1.0)
-# theta_1 = T.sample_transformation(batch_size)
-grid_t1 = T.transform_grid(grid, theta_1)
+    grid = T.uniform_meshgrid(outsize)
 
-theta_2 = torch.autograd.Variable(T.identity(batch_size, epsilon=0.0), requires_grad=True)
+    theta_1 = T.identity(batch_size, epsilon=epsilon)
+    torch.manual_seed(0)
+    theta_1 = T.sample_transformation(batch_size)*epsilon
+    grid_t1 = T.transform_grid(grid, theta_1)
 
-lr = 1e-3
-optimizer = torch.optim.Adam([theta_2], lr=lr)
-# optimizer = torch.optim.SGD([theta_2], lr=lr, momentum=0)
-# for the same step size => faster convergence with increasing N, due to smaller theta norm
+    theta_2 = torch.autograd.Variable(T.identity(batch_size, epsilon=0.0), requires_grad=True)
 
-# torch.set_num_threads(1)
-loss_values = []
-maxiter = 100
-start_time = time.process_time_ns()
-with tqdm(desc='Alignment of samples', unit='iters', total=maxiter,  position=0, leave=True) as pb:
+    optimizer = torch.optim.Adam([theta_2], lr=lr)
+    # optimizer = torch.optim.SGD([theta_2], lr=lr, momentum=0)
+    # for the same step size => faster convergence with increasing N, due to smaller theta norm
+
+    # torch.set_num_threads(1)
+    loss_values = []
+    maxiter = 1500
+    start_time = time.process_time_ns()
     for i in range(maxiter):
         optimizer.zero_grad()
         
-        N = 4
-        t = 1.0
-        # grid_t2 = T.transform_grid_ss(grid, theta_2, method="closed_form", time=1.0, N=N)
-        
-        ## t = t / 2**N
-        grid_t2 = T.transform_grid(grid, theta_2, method="closed_form")
-        grid_t2 = T.transform_grid(grid_t2, theta_2, method="closed_form")
-        # v = T.calc_velocity(grid, theta_2)
-        # grid_t2 = grid + v
-        for i in range(N):
-            # grid_t2 = T.backend.interpolate_grid_slow(grid_t2)
-            grid_t2 = T.backend.interpolate_grid(grid_t2, T.params)
+        grid_t2 = T.transform_grid_ss(grid, theta_2, method="closed_form", time=1.0, N=N)
         
         loss = torch.norm(grid_t2 - grid_t1, dim=1).sum()
-        v.retain_grad()
-        theta_2.retain_grad()
-        loss.retain_grad()
         loss.backward()
         optimizer.step()
 
-        if torch.any(torch.isnan(theta_2)):
-            print("AHSDASD")
-            break
+        loss_values.append(loss.item())
+            
+    stop_time = time.process_time_ns()
+    error_min = np.min(loss_values)
+    error_mean = np.mean(loss_values)
+    elapsed_time = (stop_time-start_time) * 1e-6
 
-        L = loss.item()
-        loss_values.append(L)
-        pb.update()
-        pb.set_postfix({'loss': L})
-        
-    pb.close()
-stop_time = time.process_time_ns()
+    results.append([epsilon, N, lr, elapsed_time, error_mean, error_min])
 
-plt.figure()
-plt.plot(grid_t1.T)
-plt.plot(grid_t2.detach().numpy().T)
-
-# plt.figure()
-# plt.plot(grid_t1.T - grid_t2.detach().numpy().T)
-
-plt.figure()
-plt.plot(loss_values)
-
-(stop_time-start_time) * 1e-6, loss_values[-1]
-
+results = pd.DataFrame(results, columns=colnames)
+results.to_csv("scaling_squaring_training.csv", index=False)
 
 # %%
+
+results = pd.read_csv("scaling_squaring_training.csv")
+
+# fig, ax = plt.subplots(2,2, constrained_layout=True, figsize=(8,8))
+plt.figure(figsize=(8,6))
+
+value_vars = ["error_mean", "error_min", "elapsed_time"]
+value_vars = ["error_mean", "elapsed_time"]
+id_vars = [e for e in results.columns if e not in value_vars]
+results_melt = results.melt(id_vars=id_vars, value_vars=value_vars)
+results_melt = results_melt[results_melt.lr != 1e-3]
+
+sns.set_style("whitegrid", {'axes.grid' : False})
+sns.set_context("paper")
+palette = "blend:orange,blue"
+g = sns.relplot(x="N", y="value", hue="epsilon", style="epsilon",
+    row="variable", col="lr", kind="line", height=4,
+    data=results_melt, legend="full", palette=palette, 
+    ci=None, markersize=8, markers=True, dashes=False, lw=2,
+    facet_kws = {
+        "sharex": True, "sharey":"row", "despine": False, "legend_out": True
+    })
+g.set_titles(template="Learning rate: {col_name}", size=12)
+g.axes[0,0].set_ylabel('Loss avg', size=12)
+# g.axes[1,0].set_ylabel('Loss min')
+g.axes[1,0].set_ylabel('Time (ms)', size=12)
+# g.axes[0,0].legend(title="$\\varepsilon$")
+g._legend.set_title("$\\varepsilon$")
+g._legend.set_bbox_to_anchor([0.98, 0.85])
+
+plt.tight_layout()
+plt.savefig("scaling_squaring_training.pdf")
+
+# %%
+
+results = pd.read_csv("scaling_squaring_training.csv")
+
+for lr in [1e-4, 1e-5, 1e-6]:
+    m = results[(results.lr == lr)]
+
+    with sns.axes_style("ticks"):
+        sns.set_context("paper")
+
+        fig, ax = plt.subplots(figsize=(8,6))
+        sns.lineplot(
+            data=m,
+            x="elapsed_time",
+            y="error_mean",
+            hue="N",
+            marker="o",
+            sort=False,
+            ax=ax,
+            palette="blend:black,black",
+            legend=None,
+            lw=1,
+            ls="dashed"
+        )
+
+        for key, row in m[m.epsilon==4].iterrows():
+            plt.text(x=row.elapsed_time, y=row.error_mean*1.02, 
+            s="N: " + str(int(row.N)), ha="left", va="baseline")
+
+        sns.lineplot(
+            data=m,
+            x="elapsed_time",
+            y="error_mean",
+            hue="epsilon",
+            marker="o",
+            sort=False,
+            ax=ax,
+            palette= "blend:orange,blue",
+            legend="full",
+            lw=2,
+        )
+
+        ax.set_xlabel('Time (ms)')
+        ax.set_ylabel('Loss avg')
+        ax.legend(title="$\\varepsilon$")
+
+        plt.tight_layout()
+        plt.savefig("scaling_squaring_training_" + str(lr) + ".pdf")
+
+# %%
+results = pd.read_csv("scaling_squaring_training.csv")
+
+fix, axes = plt.subplots(1, 3, sharey=True, figsize=(12.6,4.2), )
+sns.set_style("whitegrid", {'axes.grid' : False})
+sns.set_context("paper")
+
+k = 0
+for lr in [1e-6, 1e-5, 1e-4]:
+    m = results[(results.lr == lr)]
+    ax = axes[k]
+
+    sns.lineplot(
+        data=m,
+        x="elapsed_time",
+        y="error_mean",
+        hue="N",
+        marker="o",
+        sort=False,
+        ax=ax,
+        palette="blend:black,black",
+        legend=None,
+        lw=0.5,
+        ls="dashed",
+    )
+
+    for key, row in m[m.epsilon==4].iterrows():
+        ax.text(x=row.elapsed_time, y=row.error_mean*1.02, 
+        s="N: " + str(int(row.N)), ha="left", va="baseline", rotation=50)
+
+    for key, row in m[m.N==0].iterrows():
+        ax.text(x=row.elapsed_time-5, y=row.error_mean, 
+        s="$\\varepsilon$: " + str(int(row.epsilon)), ha="right", va="center", rotation=-20)
+
+    sns.lineplot(
+        data=m,
+        x="elapsed_time",
+        y="error_mean",
+        hue="epsilon",
+        marker="o",
+        sort=False,
+        ax=ax,
+        palette= "blend:orange,blue",
+        legend="full" if k == 2 else None,
+        lw=2,
+    )
+
+    ax.set_xlabel('Time (ms)', size=12)
+    ax.set_ylabel('Loss avg', size=12)
+    ax.set_title("Learning rate: " + str(lr), size=12)
+    ax.set_xlim((870, 1280))
+    ax.set_ylim((None, 2.1))
+    if k == 2:
+        ax.legend(title="$\\varepsilon$")
+    k += 1
+
+plt.tight_layout()
+plt.savefig("scaling_squaring_training_detail.pdf")
+
+########################################################### %%
 # %%timeit -r 20 -n 10
 
 tess_size = 5

@@ -9,37 +9,428 @@ import torch
 import matplotlib.pyplot as plt
 import cpab
 from tqdm import tqdm 
+import seaborn as sns
+import pandas as pd
 
-# %% TEST 
+# %% Study diffeomorphic properties
 
-tess_size = 10
+from itertools import product
+for tess_size, basis in product([3,4,5,6,7], ["sparse", "rref", "qr", "svd"]):
+    # tess_size = 6
+    backend = "pytorch" # ["pytorch", "numpy"]
+    device = "cpu" # ["cpu", "gpu"]
+    zero_boundary = True
+    use_slow = False
+    outsize = 501
+    batch_size = 1
+    method = "closed_form"
+    # basis = "sparse"
+    # basis = "rref"
+    # basis = "qr"
+    # basis = "svd"
+
+    T = cpab.Cpab(tess_size, backend, device, zero_boundary, basis)
+    T.params.use_slow = use_slow
+
+    grid = T.uniform_meshgrid(outsize)
+    theta = T.identity(batch_size, epsilon=1)
+    # theta = T.sample_transformation(batch_size)
+    grid_t = T.transform_grid(grid, theta, method=method)[0]
+    grid_t_inv_theta = T.transform_grid(grid, -theta, method=method, time=1.0)[0]
+    grid_t_inv_time = T.transform_grid(grid, theta, method=method, time=-1.0)[0]
+
+    grad_t = T.gradient_grid(grid, theta, method=method)[0,:,0]
+    grad_t_inv_theta = T.gradient_grid(grid, -theta, method=method, time=1.0)[0,:,0]
+    grad_t_inv_time = T.gradient_grid(grid, theta, method=method, time=-1.0)[0,:,0]
+
+    # x => f => y => f-1 => x
+    # i = 200
+    # x = grid[i].item()
+    # y = grid_t[0,i].item()
+    # xi = grid_t_inv[0,int(y*outsize)].item()
+    # print(i, x, y, xi)
+
+    def funinv(x, y):
+        return np.interp(x, y, x)
+
+    plt.subplots(figsize=(6,6))
+    plt.plot(grid, grid_t, label=f"$\\phi(x,t,\\theta)$")
+    plt.plot(grid, funinv(grid, grid_t), label=f"$\\phi^{{-1}}(x,t,\\theta)$")
+    plt.plot(grid, grid_t_inv_theta, label=f"$\\phi(x,t,-\\theta)$")
+    plt.plot(grid, grid_t_inv_time, label=f"$\\phi(x,-t,\\theta)$")
+    for x in np.linspace(0,1,tess_size+1):
+        plt.axvline(x, c="k", ls="--", lw=0.5)
+        plt.axhline(x, c="k", ls="--", lw=0.5)
+    plt.legend()
+    plt.axis("equal")
+
+    fig, axs = plt.subplots(1,3,figsize=(10.5,3.5), sharey=True)
+    which = np.linspace(0,len(grid)-1,tess_size+1).astype(int)
+    dotsize=10
+    axs[0].plot(grid, grid_t, label=f"$\\phi(x,t,\\theta)$", color="black")
+    axs[0].scatter(grid[which], grid_t[which], s=dotsize, color="black")
+    axs[0].plot(grid, funinv(grid, grid_t), label=f"$\\phi^{{-1}}(x,t,\\theta)$", color="blue", ls="dashed")
+    axs[0].scatter(grid[which], funinv(grid, grid_t)[which], s=dotsize, color="blue")
+
+    axs[1].plot(grid, grid_t, label=f"$\\phi(x,t,\\theta)$", color="black")
+    axs[1].scatter(grid[which], grid_t[which], s=dotsize, color="black")
+    axs[1].plot(grid, grid_t_inv_theta, label=f"$\\phi(x,t,-\\theta)$", color="red", ls="dashed")
+    axs[1].scatter(grid[which], grid_t_inv_theta[which], s=dotsize, color="red")
+
+    axs[2].plot(grid, grid_t, label=f"$\\phi(x,t,\\theta)$", color="black")
+    axs[2].scatter(grid[which], grid_t[which], s=dotsize, color="black")
+    axs[2].plot(grid, grid_t_inv_time, label=f"$\\phi(x,-t,\\theta)$", color="orange", ls="dashed")
+    axs[2].scatter(grid[which], grid_t_inv_time[which], s=dotsize, color="orange")
+
+    for i in range(3):
+        # for x in np.linspace(0,1,tess_size+1):
+        #     axs[i].axvline(x, c="k", ls="--", lw=0.5, alpha=0.5)
+        #     axs[i].axhline(x, c="k", ls="--", lw=0.5, alpha=0.5)
+        # axs[i].legend(loc=(0.05,0.75))
+        axs[i].legend()
+        axs[i].axis("equal")
+        axs[i].set_xticks(np.linspace(0,1,3))
+        axs[i].set_yticks(np.linspace(0,1,3))
+        axs[i].set_xlabel(f"$x$")
+
+    axs[0].set_ylabel(f"$\\phi$")
+
+    plt.tight_layout()
+    plt.savefig("diffeomorphic_properties_" + basis + "_" + str(tess_size) + ".pdf")
+# %%
+plt.figure()
+plt.plot(grid, grad_t, label=f"$\\partial\\phi(x,t,\\theta)/\\partial\\theta$")
+# plt.plot(grid, funinv(grid, grad_t), label=f"$\\partial\\phi^{{-1}}(x,t,\\theta)/\\partial\\theta$")
+plt.plot(grid, grad_t_inv_theta, label=f"$\\partial\\phi(x,t,-\\theta)/\\partial\\theta$")
+plt.plot(grid, grad_t_inv_time, label=f"$\\partial\\phi(x,-t,\\theta)/\\partial\\theta$")
+plt.legend()
+
+# %%
+x = np.linspace(0,1,50)
+y = x**2
+plt.plot(x, y)
+plt.plot(x, funinv(x,y))
+
+# %% Study metric properties
+
+def deuclidean(x, y):
+    return np.sqrt(np.mean((x-y)**2))
+
+def dcpab(x, y, tess_size, zero_boundary, outsize, nx, ny):
+    x = torch.Tensor(x)
+    y = torch.Tensor(y)
+    # tess_size = 3
+    backend = "pytorch" # ["pytorch", "numpy"]
+    device = "cpu" # ["cpu", "gpu"]
+    # zero_boundary = True
+    use_slow = False
+    # outsize = 500
+    batch_size = 1
+    method = "closed_form"
+    basis = "sparse"
+    basis = "rref"
+    basis = "qr"
+
+    T = cpab.Cpab(tess_size, backend, device, zero_boundary, basis)
+    T.params.use_slow = use_slow
+
+    grid = T.uniform_meshgrid(outsize)
+    theta = T.identity(batch_size, epsilon=0)
+    theta = torch.autograd.Variable(theta, requires_grad=True)
+
+    lr = 1e-3
+    optimizer = torch.optim.Adam([theta], lr=lr)
+
+    maxiter = 150
+    loss_values = []
+    for i in range(maxiter):
+        optimizer.zero_grad()
+        
+        N = 4
+        xaligned = T.transform_data_ss(x, theta, outsize, N=N)
+        loss = torch.norm(xaligned - y, dim=1).mean()
+        loss.backward()
+        optimizer.step()
+        loss_values.append(loss.item())
+
+    x = x.detach().numpy()
+    y = y.detach().numpy()
+    xaligned = xaligned.detach().numpy()
+
+    # plt.figure()
+    # plt.plot(loss_values)
+
+    plt.figure()
+    plt.plot(x[0,:,0], label=nx)
+    plt.plot(y[0,:,0], label=ny)
+    plt.plot(xaligned[0,:,0], label=nx + " aligned")
+    plt.xlabel("time")
+    plt.ylabel("value")
+    plt.axis("off")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("metric_" + nx + "_vs_" + ny + ".pdf")
+
+    return deuclidean(xaligned, y)
+
+def assert_metric(d12, d13, d23, d21, d31, d32):
+    print(r"$d(x,z) \leq d(x,y) + d(y,z)$", d13 <= d12 + d23, d13, d12 + d23)
+    print(r"$d(y,z) \leq d(y,x) + d(x,z)$", d23 <= d21 + d13, d23, d21 + d13)
+    print(r"$d(x,y) \leq d(x,z) + d(z,y)$",d12 <= d13 + d32, d12, d13 + d32)
+
+    print(r"$d(z,x) \leq d(z,y) + d(y,x)$", d31 <= d32 + d21, d31, d32 + d21)
+    print(r"$d(z,y) \leq d(z,x) + d(x,y)$", d32 <= d31 + d12, d32, d31 + d12)
+    print(r"$d(y,x) \leq d(y,z) + d(z,x)$", d21 <= d23 + d31, d21, d23 + d31)
+
+
+channels = 1
+width = 100
+a = np.zeros((batch_size, channels))
+b = np.ones((batch_size, channels)) * 2 * np.pi
+noise = np.random.normal(0, 0.03, (batch_size, width, channels))
+x = np.linspace(a, b, width, axis=1)
+y1 = 0.5 + np.sin(x) + noise
+y2 = 0.5 + np.sin(x-np.pi/6) + noise
+y3 = 0.5 + np.sin(x-np.pi/3) + noise
+
+plt.figure()
+plt.plot(y1[0,:,0], label="x")
+plt.plot(y2[0,:,0], label="y")
+plt.plot(y3[0,:,0], label="z")
+plt.xlabel("time")
+plt.ylabel("value")
+plt.axis("off")
+plt.legend()
+plt.tight_layout()
+plt.savefig("metric_xyz.pdf")
+
+deuclidean_12 = deuclidean(y1,y2)
+deuclidean_13 = deuclidean(y1,y3)
+deuclidean_23 = deuclidean(y2,y3)
+
+deuclidean_21 = deuclidean(y2,y1)
+deuclidean_31 = deuclidean(y3,y1)
+deuclidean_32 = deuclidean(y3,y2)
+
+print("EUCLIDEAN")
+assert_metric(deuclidean_12, deuclidean_13, deuclidean_23, deuclidean_21, deuclidean_31, deuclidean_32)
+
+tess_size = 15
+zero_boundary = False
+dcpab_12 = dcpab(y1, y2, tess_size, zero_boundary, width, "x", "y")
+dcpab_13 = dcpab(y1, y3, tess_size, zero_boundary, width, "x", "z")
+dcpab_23 = dcpab(y2, y3, tess_size, zero_boundary, width, "y", "z")
+
+dcpab_21 = dcpab(y2, y1, tess_size, zero_boundary, width, "y", "x")
+dcpab_31 = dcpab(y3, y1, tess_size, zero_boundary, width, "z", "x")
+dcpab_32 = dcpab(y3, y2, tess_size, zero_boundary, width, "z", "y")
+
+print("CPAB")
+assert_metric(dcpab_12, dcpab_13, dcpab_23, dcpab_21, dcpab_31, dcpab_32)
+
+
+
+
+# %% Study gradient wrt x
+
+tess_size = 3
 backend = "pytorch" # ["pytorch", "numpy"]
 device = "cpu" # ["cpu", "gpu"]
-zero_boundary = False
+zero_boundary = True
 use_slow = False
-outsize = 100
-batch_size = 2
+outsize = 500
+batch_size = 1
 method = "closed_form"
-basis = "svd"
 basis = "sparse"
 basis = "rref"
+basis = "qr"
 
 T = cpab.Cpab(tess_size, backend, device, zero_boundary, basis)
 T.params.use_slow = use_slow
 
 grid = T.uniform_meshgrid(outsize)
 theta = T.identity(batch_size, epsilon=1)
-theta = T.sample_transformation(batch_size)
+# theta = T.sample_transformation(batch_size)
 grid_t = T.transform_grid(grid, theta, method=method)
 grid_t2 = T.transform_grid(grid_t, theta, method=method)
 
 v = T.calc_velocity(grid, theta)
 plt.plot(grid, v.T)
+
 plt.figure()
 plt.plot(grid, grid_t.T)
 plt.plot(grid, grid_t2.T)
 
+phi = grid_t
+phip1 = np.gradient(phi, grid, axis=1)
+plt.figure()
+plt.plot(grid, phip1.T)
+
+phip2 = np.gradient(phip1, grid, axis=1)
+plt.figure()
+plt.plot(grid, phip2.T)
+
+np.where(phip2 > 0)[1] # if second derivative is zero, then we have not jump to other cells
+
+
+
+# %% Compare integration methods: numeric vs gradient
+
+tess_size = 20
+backend = "pytorch" # ["pytorch", "numpy"]
+device = "cpu" # ["cpu", "gpu"]
+zero_boundary = True
+outsize = 200
+batch_size = 1
+basis = "svd"
+
+T = cpab.Cpab(tess_size, backend, device, zero_boundary, basis)
+
+grid = T.uniform_meshgrid(outsize)
+
+nSteps1_arr = np.arange(1,21)
+nSteps2_arr = np.arange(1,21)
+reps = 20
+
+from itertools import product
+
+results = np.zeros((len(nSteps2_arr), len(nSteps1_arr), reps))
+for nSteps1, nSteps2 in product(nSteps1_arr, nSteps2_arr):
+    for i in range(reps):
+        print( nSteps1, nSteps2, i)
+        # theta = T.identity(batch_size, epsilon=1)
+        theta = T.sample_transformation(batch_size)
+
+        grid_t1 = T.transform_grid(grid, theta, method="closed_form")
+
+        T.params.nSteps1 = nSteps1
+        T.params.nSteps2 = nSteps2
+
+        grid_t2 = T.transform_grid(grid, theta, method="numeric")
+
+        # error = (grid_t1 - grid_t2).numpy()
+        # rms = np.sqrt(np.mean(error**2))
+
+        # error = 100*(grid_t2-grid_t1)/grid_t1
+        # rms = np.mean(np.abs(error.numpy()))
+
+        error = (grid_t1 - grid_t2).numpy()
+        rms = np.max(np.abs(error))
+
+        results[nSteps2-1, nSteps1-1, i] = rms
+        
+    #     results[nSteps2-1, nSteps1-1] += rms
+    # results[nSteps2-1, nSteps1-1] /= reps
+results = np.median(results, axis=2)
+results_integration = results
+print("DONE")
+# %% 
+from matplotlib.colors import LogNorm
+
+sns.set_style("whitegrid")
+sns.set_context("paper")
+fig, ax = plt.subplots(constrained_layout=True, figsize=(5,4))
+sns.heatmap(
+    results, norm=LogNorm(results.min(),results.max()),
+    square=True, xticklabels=nSteps1_arr, yticklabels=nSteps2_arr,
+    # cbar_kws = {"label": "RMS Error"}, ax=ax
+    cbar_kws = {"label": "Precision"}, ax=ax, cmap="inferno"
+)
+ax.set_xlabel("$N_{steps}$")
+ax.set_ylabel("$n_{steps}$")
+plt.yticks(rotation=0)
+plt.savefig("error_integration.pdf", tight_layout=True)
+
+# %% Compare gradient methods: numeric vs gradient
+
+tess_size = 20
+backend = "pytorch" # ["pytorch", "numpy"]
+device = "cpu" # ["cpu", "gpu"]
+zero_boundary = True
+outsize = 200
+batch_size = 1
+basis = "svd"
+
+T = cpab.Cpab(tess_size, backend, device, zero_boundary, basis)
+
+grid = T.uniform_meshgrid(outsize)
+
+nSteps1_arr = np.arange(1,21)
+nSteps2_arr = np.arange(1,21)
+reps = 20
+
+from itertools import product
+
+results = np.zeros((len(nSteps2_arr), len(nSteps1_arr), reps))
+for nSteps1, nSteps2 in product(nSteps1_arr, nSteps2_arr):
+    for i in range(reps):
+        print(nSteps1, nSteps2, i)
+        # theta = T.identity(batch_size, epsilon=1)
+        theta = T.sample_transformation(batch_size)
+
+        grid_t1 = T.gradient_grid(grid, theta, method="closed_form")
+
+        T.params.nSteps1 = nSteps1
+        T.params.nSteps2 = nSteps2
+
+        grid_t2 = T.gradient_grid(grid, theta, method="numeric")
+
+        # error = (grid_t1 - grid_t2).numpy()
+        # rms = np.sqrt(np.mean(error**2))
+
+        # error = 100*(grid_t2-grid_t1)/grid_t1
+        # rms = np.mean(np.abs(error.numpy()))
+
+        error = (grid_t1 - grid_t2).numpy()
+        rms = np.max(np.abs(error))
+
+        results[nSteps2-1, nSteps1-1, i] = rms
+
+    #     results[nSteps2-1, nSteps1-1] += rms
+    # results[nSteps2-1, nSteps1-1] /= reps
+results = np.median(results, axis=2)
+results_gradient = results
+print("DONE")
 # %%
+from matplotlib.colors import LogNorm
+
+sns.set_style("whitegrid")
+sns.set_context("paper")
+fig, ax = plt.subplots(constrained_layout=True, figsize=(5,4))
+sns.heatmap(
+    results, norm=LogNorm(results.min(),results.max()),
+    square=True, xticklabels=nSteps1_arr, yticklabels=nSteps2_arr,
+    cbar_kws = {"label": "Precision"}, ax=ax, cmap="inferno", #vmin=1e-4, vmax=1e1
+)
+ax.set_xlabel("$N_{steps}$")
+ax.set_ylabel("$n_{steps}$")
+plt.yticks(rotation=0)
+plt.savefig("error_gradient.pdf", tight_layout=True)
+
+# %%
+from matplotlib.colors import LogNorm
+
+sns.set_style("whitegrid")
+sns.set_context("paper")
+fig, (ax0, ax1) = plt.subplots(1,2, constrained_layout=True, figsize=(5,4))
+
+r_min = min(results_integration.min(), results_gradient.min())
+r_max = max(results_integration.max(), results_gradient.max())
+sns.heatmap(
+    results_integration, norm=LogNorm(r_min, r_max),
+    square=True, xticklabels=nSteps1_arr, yticklabels=nSteps2_arr,
+    cbar_kws = {"label": "Precision"}, ax=ax0, cmap="inferno"
+)
+sns.heatmap(
+    results_gradient, norm=LogNorm(r_min, r_max),
+    square=True, xticklabels=nSteps1_arr, yticklabels=nSteps2_arr,
+    cbar_kws = {"label": "Precision"}, ax=ax1, cmap="inferno"
+)
+# ax.set_xlabel("$N_{steps}$")
+# ax.set_ylabel("$n_{steps}$")
+# plt.savefig("error_gradient.pdf", tight_layout=True)
+
+# %% Study composition of grids
 
 grid = T.uniform_meshgrid(outsize)
 theta = T.identity(batch_size, epsilon=0.1)
@@ -83,10 +474,10 @@ plt.plot(data_t[:,:,1].T)
 
 T.visualize_deformdata(data, 2**N * theta)
 
-# %%
+# %% Alignment of time series samples
 
-batch_size = 3
-channels = 4
+batch_size = 1
+channels = 1
 outsize = 100
 
 a = np.zeros((batch_size, channels))
@@ -96,14 +487,20 @@ x = np.linspace(a, b, outsize, axis=1)
 dataA = np.sin(x)
 dataB = np.sin(x + 0.3)
 
-dataA = torch.tensor(dataA)
-dataB = torch.tensor(dataB)
+def normalize(x):
+    return (x - np.min(x)) / np.ptp(x)
+
+def normalize(x):
+    return (x - np.mean(x)) / np.std(x)
+
+dataA = torch.tensor(normalize(dataA))
+dataB = torch.tensor(normalize(dataB))
 
 tess_size = 10
 backend = "pytorch" # ["pytorch", "numpy"]
 device = "cpu" # ["cpu", "gpu"]
 zero_boundary = False
-use_slow = True
+use_slow = False
 method = "closed_form"
 basis = "svd"
 basis = "sparse"
@@ -144,16 +541,18 @@ with tqdm(desc='Alignment of samples', unit='iters', total=maxiter,  position=0,
 
 plt.figure()
 plt.plot(loss_values)
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
 
 plt.figure()
-
-plt.plot(dataA[:,:,0].T)
-plt.plot(dataB[:,:,0].T)
-plt.plot(dataT.detach()[:,:,0].T)
+plt.plot(dataA[:,:,0].T, label="A original")
+plt.plot(dataB[:,:,0].T, label="B original")
+plt.plot(dataT.detach()[:,:,0].T, label="A aligned to B")
+plt.legend()
 
 T.visualize_deformgrid(2**N*theta.detach())
 
-# %%
+# %% time benchmark
 %%timeit -r 20 -n 1
 
 N = 3
@@ -166,7 +565,7 @@ method = "closed_form"
 grad_t = T.gradient_grid(grid, theta, method, time=t)
 # plt.plot(grad_t[0,:,:])
 
-# %%
+# %% scaling squaring time benchmark
 %%timeit -r 200 -n 1
 
 N = 2
@@ -179,7 +578,7 @@ for j in range(N):
 # grad_t = T.gradient_grid(grid, theta, method, time=t)
 # error = np.linalg.norm(grid_t - grid_t2)
 
-# %%
+# %% Visualize functions
 t = 1.0
 # T.visualize_tesselation()
 T.visualize_velocity(theta)
@@ -318,7 +717,7 @@ for k, v in results.items():
 
 # %% OPTIMIZATION BY MCMC SAMPLING
 
-tess_size = 50
+tess_size = 5
 backend = "pytorch" # ["pytorch", "numpy"]
 device = "cpu" # ["cpu", "gpu"]
 zero_boundary = True
