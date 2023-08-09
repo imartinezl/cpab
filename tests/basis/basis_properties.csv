@@ -1,0 +1,5 @@
+basis,sparsity,cond num,orth,orthogonality,orthnorm,orthonormality,norm,norm inv
+svd,0.01,1.0,True,0.0,True,0.0,7.0,7.0
+rref,0.73,1.326,True,0.0,False,3.632,8.405,5.926
+sparse,0.96,34.407,False,0.02,False,18.128,11.418,16.991
+qr,0.04,1.0,True,0.0,True,0.0,7.0,7.0
